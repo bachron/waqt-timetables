@@ -45,7 +45,7 @@ jobs:
           nxt = year + 1
           md = (today.month, today.day)
           past_singapore_deadline = today.year > year or md >= (12, 20)
-          past_london_deadline = today.year > year and md >= (1, 10) or today.year > year + 0 and today.month > 1
+          past_london_deadline = today.year > year and md >= (1, 10)
           if past_singapore_deadline and not os.path.exists(f"singapore/{nxt}.json"):
               problems.append(f"No Singapore (MUIS) timetable for {nxt} yet.")
           if past_london_deadline and not os.path.exists(f"london/{nxt}.json"):
