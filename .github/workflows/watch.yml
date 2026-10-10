@@ -1,0 +1,64 @@
+name: Watch the timetable updates
+
+# The weekly job on the owner's Mac writes status.json each run. This opens ONE issue ("Timetable update
+# needs attention") when something needs a person, and closes it when it clears:
+#   - the Mac job reported a problem (a layout change, an incomplete year, a failed download);
+#   - the Mac job has not run for 14 days (the watchdog: a silent job is a failing job);
+#   - a new year should have been published by now and is not (Singapore by 20 Dec, London by 10 Jan).
+
+on:
+  push:
+    paths: [status.json]
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide and update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY' > problems.txt
+          import json, os, datetime as dt
+          today = dt.datetime.now(dt.timezone.utc)
+          problems = []
+          try:
+              status = json.load(open("status.json"))
+          except Exception:
+              status = None
+              problems.append("status.json is missing or unreadable: the Mac job has never reported.")
+          if status:
+              problems += status.get("problems", [])
+              last = dt.datetime.fromisoformat(status["lastRun"].replace("Z", "+00:00"))
+              if (today - last).days > 14:
+                  problems.append(f"The Mac job last ran {last:%d %b %Y}, {(today - last).days} days ago.")
+          # The year whose successor we are waiting for: this year from July on, last year in Jan to Jun.
+          year = today.year if today.month >= 7 else today.year - 1
+          nxt = year + 1
+          md = (today.month, today.day)
+          past_singapore_deadline = today.year > year or md >= (12, 20)
+          past_london_deadline = today.year > year and md >= (1, 10) or today.year > year + 0 and today.month > 1
+          if past_singapore_deadline and not os.path.exists(f"singapore/{nxt}.json"):
+              problems.append(f"No Singapore (MUIS) timetable for {nxt} yet.")
+          if past_london_deadline and not os.path.exists(f"london/{nxt}.json"):
+              problems.append(f"No London timetable for {nxt} yet.")
+          for p in problems:
+              print(p)
+          PY
+          cat problems.txt
+          title="Timetable update needs attention"
+          number=$(gh issue list --state open --search "$title in:title" --json number -q '.[0].number')
+          if [ -s problems.txt ]; then
+            body="$(printf 'The timetable watcher found:\n\n'; sed 's/^/- /' problems.txt; printf '\nNothing incomplete was published. See docs/timetable-updates.md in the Waqt repo.')"
+            if [ -n "$number" ]; then gh issue comment "$number" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "Cleared: the latest run reported no problems."
+          fi
